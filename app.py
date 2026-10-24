@@ -13,24 +13,34 @@ import warnings
 from datetime import datetime
 
 # =====================================================================
-# 🛠️ STRATEGY CONFIGURATION & TELEGRAM SETTINGS
+# 🛠️ STRATEGY & PAPER TRADING CONFIGURATION
 # =====================================================================
-ATR_MULTIPLIER = 1.5      # Stop Loss ATR Multiplier
-RISK_REWARD_RATIO = 4.5   # Target Risk/Reward Ratio (1:2.5)
-TIMEFRAME_INTERVAL = "5m" # Chart Timeframe
+ATR_MULTIPLIER = 1.5      
+RISK_REWARD_RATIO = 2.5   
+TIMEFRAME_INTERVAL = "5m" 
 HISTORY_FILE = "trades_history.json"
+ACCOUNT_FILE = "account_state.json"
 
 # Telegram Credentials
 TELEGRAM_BOT_TOKEN = "8230476679:AAFcaVSR2oVzUgAtWXyJoPmCXBN38FkrYFo"
 TELEGRAM_CHAT_IDS = ["7363561056"]
 
-# Clean yfinance warnings
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 sock = Sock(app)
 
 live_market_data = []
+
+# Initialize Account State (₹1,00,000 INR Capital)
+if not os.path.exists(ACCOUNT_FILE):
+    initial_account = {
+        "initial_capital_inr": 100000.0,
+        "current_balance_inr": 100000.0,
+        "usd_to_inr_rate": 83.5
+    }
+    with open(ACCOUNT_FILE, mode='w') as f:
+        json.dump(initial_account, f)
 
 if not os.path.exists(HISTORY_FILE):
     with open(HISTORY_FILE, mode='w') as f:
@@ -39,11 +49,11 @@ if not os.path.exists(HISTORY_FILE):
 locked_signals = {
     "Tether Gold (XAUTUSD)": {
         "active": False, "signal": "NEUTRAL", "sig_time": "-", 
-        "sig_price": "-", "sl": 0.0, "tgt": 0.0, "last_closed_time": ""
+        "sig_price": "-", "sl": 0.0, "tgt": 0.0, "last_closed_time": "", "qty": 0.0, "invested_inr": 0.0
     },
     "Bitcoin (BTCUSD)": {
         "active": False, "signal": "NEUTRAL", "sig_time": "-", 
-        "sig_price": "-", "sl": 0.0, "tgt": 0.0, "last_closed_time": ""
+        "sig_price": "-", "sl": 0.0, "tgt": 0.0, "last_closed_time": "", "qty": 0.0, "invested_inr": 0.0
     }
 }
 
@@ -53,16 +63,24 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CSB - Master Setup Workstation</title>
+    <title>CSB - Master Workstation & Paper Trading</title>
     <style>
         body { background-color: #0f172a; color: #f8fafc; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; }
         h2 { color: #38bdf8; text-align: center; margin-bottom: 5px; }
         p.subtitle { color: #94a3b8; text-align: center; margin-bottom: 20px; font-size: 14px; }
+        
+        /* Summary Cards */
+        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; max-width: 1400px; margin: 0 auto 20px auto; }
+        .metric-card { background: #1e293b; padding: 20px; border-radius: 10px; border: 1px solid #334155; text-align: center; }
+        .metric-card h6 { margin: 0 0 8px 0; color: #94a3b8; font-size: 13px; text-transform: uppercase; }
+        .metric-card h3 { margin: 0; font-size: 22px; color: #f8fafc; }
+
         .tabs { display: flex; justify-content: center; gap: 10px; margin-bottom: 20px; }
         .tab-btn { background-color: #1e293b; color: #94a3b8; border: 1px solid #334155; padding: 10px 20px; cursor: pointer; border-radius: 6px; font-weight: 600; }
         .tab-btn.active { background-color: #0284c7; color: #fff; border-color: #0284c7; }
         .tab-content { display: none; max-width: 1400px; margin: 0 auto; background: #1e293b; padding: 25px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
         .tab-content.active { display: block; }
+        
         table { width: 100%; border-collapse: collapse; text-align: center; margin-top: 10px; }
         th, td { padding: 12px 6px; border-bottom: 1px solid #334155; font-size: 13px; }
         th { background-color: #0f172a; color: #38bdf8; }
@@ -77,69 +95,82 @@ HTML_TEMPLATE = """
 </head>
 <body>
 
-    <h2>⚡ Chandrapur Share Bazar - Master Workstation</h2>
-    <p class="subtitle">5-Minute Timeframe Synced with TradingView + Telegram Alerts</p>
+    <h2>⚡ Chandrapur Share Bazar - Automated Paper Trading Workstation</h2>
+    <p class="subtitle">Live Signal Execution + ₹1,00,000 INR Virtual Capital Portfolio Manager</p>
     
-    <div class="tabs">
-        <button class="tab-btn active" onclick="openTab(event, 'tab1')">📊 Master Screener</button>
-        <button class="tab-btn" onclick="openTab(event, 'tab2')">🧱 Prev Day Pivots (S&R)</button>
-        <button class="tab-btn" onclick="openTab(event, 'tab3')">📜 Closed Trades History</button>
+    <!-- Account Summary Metrics -->
+    <div class="metrics-grid">
+        <div class="metric-card">
+            <h6>Initial Capital</h6>
+            <h3>₹1,00,000.00</h3>
+        </div>
+        <div class="metric-card">
+            <h6>Current Balance</h6>
+            <h3 id="curr-balance">₹1,00,000.00</h3>
+        </div>
+        <div class="metric-card">
+            <h6>Total Net P&L</h6>
+            <h3 id="net-pnl">₹0.00</h3>
+        </div>
+        <div class="metric-card">
+            <h6>Win Rate</h6>
+            <h3 id="win-rate">0.00%</h3>
+        </div>
     </div>
 
+    <div class="tabs">
+        <button class="tab-btn active" onclick="openTab(event, 'tab1')">📊 Master Screener & Orders</button>
+        <button class="tab-btn" onclick="openTab(event, 'tab2')">📈 Live TradingView Charts</button>
+        <button class="tab-btn" onclick="openTab(event, 'tab3')">📜 Account Statement & Ledger</button>
+    </div>
+
+    <!-- TAB 1: Screener -->
     <div id="tab1" class="tab-content active">
-        <h3>Active Master Signals & Locked Execution Levels</h3>
+        <h3>Active Signals & Executed Positions</h3>
         <table>
             <thead>
                 <tr>
                     <th>Asset</th>
                     <th>Current Price</th>
                     <th>Master Signal</th>
-                    <th>Trigger Time (IST)</th>
-                    <th>Exact Entry Price</th>
-                    <th>Price Diff</th>
+                    <th>Entry Price</th>
+                    <th>Allocated (INR)</th>
                     <th>Stop Loss</th>
                     <th>Target</th>
                 </tr>
             </thead>
             <tbody id="screener-data">
-                <tr><td colspan="8">Connecting real-time feed...</td></tr>
+                <tr><td colspan="7">Connecting feed...</td></tr>
             </tbody>
         </table>
     </div>
 
+    <!-- TAB 2: Interactive Charts -->
     <div id="tab2" class="tab-content">
-        <h3>Previous Day H-L-C Support & Resistance</h3>
-        <table>
-            <thead>
-                <tr>
-                    <th>Asset</th>
-                    <th>Current Price</th>
-                    <th>Resistance 2 (R2)</th>
-                    <th>Resistance 1 (R1)</th>
-                    <th>Pivot Point (P)</th>
-                    <th>Support 1 (S1)</th>
-                    <th>Support 2 (S2)</th>
-                </tr>
-            </thead>
-            <tbody id="sr-data">
-                <tr><td colspan="7">Calculating pivots...</td></tr>
-            </tbody>
-        </table>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h3 style="margin:0;">Live Technical Chart</h3>
+            <select id="asset-chart-select" class="form-select" style="background:#0f172a; color:#fff; padding:8px 12px; border-radius:6px; border:1px solid #334155;" onchange="updateChartSymbol(this.value)">
+                <option value="BINANCE:BTCUSDT">Bitcoin (BTCUSD)</option>
+                <option value="PAXOS:XAUTUSD">Tether Gold (XAUTUSD)</option>
+            </select>
+        </div>
+        <div id="tradingview_chart" style="height: 500px;"></div>
     </div>
 
+    <!-- TAB 3: Statement History -->
     <div id="tab3" class="tab-content">
-        <h3>Saved Trade Results</h3>
+        <h3>Detailed Account Statement & Trade Log</h3>
         <table>
             <thead>
                 <tr>
                     <th>Asset</th>
                     <th>Signal</th>
                     <th>Trigger Time</th>
-                    <th>Entry Price</th>
-                    <th>Exit Price</th>
-                    <th>Exit Time</th>
-                    <th>Exit Reason</th>
-                    <th>P&L ($)</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>Reason</th>
+                    <th>P&L (INR)</th>
+                    <th>Balance After</th>
                 </tr>
             </thead>
             <tbody id="history-data">
@@ -148,9 +179,28 @@ HTML_TEMPLATE = """
         </table>
     </div>
 
-    <div class="refresh-status">🟢 Live WebSocket Connected & Telegram Active</div>
+    <div class="refresh-status">🟢 Live WebSocket Connected & Paper Execution Active</div>
 
-    <script>
+    <!-- TradingView Embed Library -->
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+    <script type="text/javascript">
+        let tvWidget;
+        function updateChartSymbol(symbol) {
+            tvWidget = new TradingView.widget({
+                "autosize": true,
+                "symbol": symbol,
+                "interval": "5",
+                "timezone": "Asia/Kolkata",
+                "theme": "dark",
+                "style": "1",
+                "locale": "en",
+                "toolbar_bg": "#f1f3f6",
+                "enable_publishing": false,
+                "container_id": "tradingview_chart"
+            });
+        }
+        updateChartSymbol("BINANCE:BTCUSDT");
+
         function openTab(evt, tabName) {
             let contents = document.getElementsByClassName("tab-content");
             for (let c of contents) c.classList.remove("active");
@@ -166,48 +216,43 @@ HTML_TEMPLATE = """
             let res = JSON.parse(event.data);
             let marketData = res.market;
             let historyData = res.history;
+            let acc = res.account;
 
-            let sHtml = '', srHtml = '', hHtml = '';
+            // Update Metrics
+            document.getElementById('curr-balance').innerText = '₹' + acc.current_balance_inr.toLocaleString('en-IN', {minimumFractionDigits: 2});
+            let pnlColorClass = acc.total_pnl_inr >= 0 ? 'bullish' : 'bearish';
+            document.getElementById('net-pnl').innerHTML = `<span class="${pnlColorClass}">₹${acc.total_pnl_inr >= 0 ? '+' : ''}${acc.total_pnl_inr.toLocaleString('en-IN', {minimumFractionDigits: 2})}</span>`;
+            document.getElementById('win-rate').innerText = acc.win_rate + '%';
+
+            let sHtml = '', hHtml = '';
 
             marketData.forEach(item => {
                 let badge = 'badge-neutral';
                 if (item.signal.includes('BUY')) badge = 'badge-buy';
                 if (item.signal.includes('SELL')) badge = 'badge-sell';
-                let diffColor = item.price_diff >= 0 ? 'bullish' : 'bearish';
                 
                 sHtml += `<tr>
                     <td><strong>${item.asset}</strong></td>
                     <td>$${item.price.toFixed(2)}</td>
                     <td><span class="badge ${badge}">${item.signal}</span></td>
-                    <td><span style="color:#38bdf8; font-weight:600;">${item.sig_time}</span></td>
                     <td><strong>${item.sig_price !== '-' ? '$' + item.sig_price : '-'}</strong></td>
-                    <td class="${diffColor}">${item.price_diff !== 0 ? (item.price_diff > 0 ? '+' + item.price_diff.toFixed(2) : item.price_diff.toFixed(2)) : '0.00'}</td>
+                    <td>${item.invested_inr > 0 ? '₹' + item.invested_inr.toLocaleString('en-IN') : '-'}</td>
                     <td class="bearish">${item.sl !== '-' ? '$' + item.sl : '-'}</td>
                     <td class="bullish">${item.tgt !== '-' ? '$' + item.tgt : '-'}</td>
-                </tr>`;
-
-                srHtml += `<tr>
-                    <td><strong>${item.asset}</strong></td>
-                    <td>$${item.price.toFixed(2)}</td>
-                    <td class="bearish">$${item.r2}</td>
-                    <td class="bearish">$${item.r1}</td>
-                    <td style="color:#38bdf8; font-weight:bold;">$${item.pivot}</td>
-                    <td class="bullish">$${item.s1}</td>
-                    <td class="bullish">$${item.s2}</td>
                 </tr>`;
             });
 
             historyData.reverse().forEach(h => {
-                let pnlColor = parseFloat(h.pnl) >= 0 ? 'bullish' : 'bearish';
+                let pnlColor = parseFloat(h.pnl_inr) >= 0 ? 'bullish' : 'bearish';
                 hHtml += `<tr>
                     <td><strong>${h.asset}</strong></td>
                     <td><span class="badge ${h.signal.includes('BUY') ? 'badge-buy' : 'badge-sell'}">${h.signal}</span></td>
                     <td>${h.trigger_time}</td>
                     <td>$${h.entry}</td>
                     <td>$${h.exit}</td>
-                    <td><span style="color:#38bdf8; font-weight:600;">${h.exit_time || '-'}</span></td>
                     <td><strong>${h.reason}</strong></td>
-                    <td class="${pnlColor}">${parseFloat(h.pnl) > 0 ? '+' : ''}$${h.pnl}</td>
+                    <td class="${pnlColor}">₹${parseFloat(h.pnl_inr) > 0 ? '+' : ''}${h.pnl_inr.toLocaleString('en-IN')}</td>
+                    <td>₹${h.balance_after.toLocaleString('en-IN')}</td>
                 </tr>`;
             });
 
@@ -216,7 +261,6 @@ HTML_TEMPLATE = """
             }
 
             document.getElementById('screener-data').innerHTML = sHtml;
-            document.getElementById('sr-data').innerHTML = srHtml;
             document.getElementById('history-data').innerHTML = hHtml;
         };
     </script>
@@ -233,6 +277,21 @@ def send_telegram_alert(message):
         except Exception as e:
             print(f"Telegram error: {e}")
 
+def get_account_state():
+    if os.path.exists(ACCOUNT_FILE):
+        try:
+            with open(ACCOUNT_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            pass
+    return {"initial_capital_inr": 100000.0, "current_balance_inr": 100000.0, "usd_to_inr_rate": 83.5}
+
+def update_account_balance(pnl_inr):
+    acc = get_account_state()
+    acc["current_balance_inr"] = round(acc["current_balance_inr"] + pnl_inr, 2)
+    with open(ACCOUNT_FILE, 'w') as f:
+        json.dump(acc, f, indent=4)
+
 def save_trade_to_json(trade):
     trades = []
     if os.path.exists(HISTORY_FILE):
@@ -244,18 +303,22 @@ def save_trade_to_json(trade):
     
     exists = any(t['asset'] == trade['asset'] and t['trigger_time'] == trade['trigger_time'] and t['reason'] == trade['reason'] for t in trades)
     if not exists:
+        update_account_balance(trade['pnl_inr'])
+        acc = get_account_state()
+        trade['balance_after'] = acc['current_balance_inr']
+        
         trades.append(trade)
         with open(HISTORY_FILE, mode='w') as f:
             json.dump(trades, f, indent=4)
         
-        # Send closed trade summary to Telegram
-        msg = f"📜 *CSB Trade Closed*\n\n" \
+        # Telegram Trade Closed Notification
+        msg = f"📜 *CSB Paper Trade Closed*\n\n" \
               f"📌 *Asset:* {trade['asset']}\n" \
               f"📊 *Signal:* {trade['signal']}\n" \
-              f"⏱️ *Trigger:* {trade['trigger_time']}\n" \
               f"💵 *Entry:* ${trade['entry']} | *Exit:* ${trade['exit']}\n" \
               f"📢 *Result:* {trade['reason']}\n" \
-              f"💰 *P&L:* ${trade['pnl']}"
+              f"💰 *P&L:* ₹{trade['pnl_inr']:+,.2f}\n" \
+              f"🏦 *New Balance:* ₹{trade['balance_after']:,.2f}"
         send_telegram_alert(msg)
 
 def get_history_from_json():
@@ -266,6 +329,22 @@ def get_history_from_json():
         except:
             return []
     return []
+
+def get_account_metrics():
+    acc = get_account_state()
+    history = get_history_from_json()
+    total_trades = len(history)
+    winning_trades = sum(1 for t in history if t["pnl_inr"] > 0)
+    win_rate = round((winning_trades / total_trades * 100), 2) if total_trades > 0 else 0.0
+    total_pnl = round(acc["current_balance_inr"] - acc["initial_capital_inr"], 2)
+    
+    return {
+        "initial_capital_inr": acc["initial_capital_inr"],
+        "current_balance_inr": acc["current_balance_inr"],
+        "total_pnl_inr": total_pnl,
+        "win_rate": win_rate,
+        "total_trades": total_trades
+    }
 
 def analyze_asset(name, symbol):
     global locked_signals
@@ -278,16 +357,6 @@ def analyze_asset(name, symbol):
         ticker_obj = yf.Ticker(symbol)
         todays_data = ticker_obj.history(period="1d", interval="1m")
         curr_price = float(todays_data['Close'].iloc[-1]) if not todays_data.empty else float(df['Close'].iloc[-1])
-
-        daily_df = df.resample('D').agg({'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
-        prev_day = daily_df.iloc[-2] if len(daily_df) >= 2 else daily_df.iloc[-1]
-        prev_h, prev_l, prev_c = float(prev_day['High']), float(prev_day['Low']), float(prev_day['Close'])
-
-        pivot = (prev_h + prev_l + prev_c) / 3.0
-        r1 = (2.0 * pivot) - prev_l
-        s1 = (2.0 * pivot) - prev_h
-        r2 = pivot + (prev_h - prev_l)
-        s2 = pivot - (prev_h - prev_l)
 
         df['EMA10'] = ta.ema(df['Close'], length=10)
         df['EMA20'] = ta.ema(df['Close'], length=20)
@@ -312,31 +381,34 @@ def analyze_asset(name, symbol):
             sl = state["sl"]
             tgt = state["tgt"]
             sig_type = state["signal"]
+            qty = state["qty"]
 
             hit_exit = False
             exit_reason = ""
-            pnl = 0.0
+            pnl_usd = 0.0
 
             if "BUY" in sig_type:
                 if curr_price >= tgt:
                     hit_exit = True
                     exit_reason = "🎯 TARGET HIT"
-                    pnl = round(tgt - entry, 2)
+                    pnl_usd = (tgt - entry) * qty
                 elif curr_price <= sl:
                     hit_exit = True
                     exit_reason = "❌ STOP LOSS HIT"
-                    pnl = round(sl - entry, 2)
+                    pnl_usd = (sl - entry) * qty
             elif "SELL" in sig_type:
                 if curr_price <= tgt:
                     hit_exit = True
                     exit_reason = "🎯 TARGET HIT"
-                    pnl = round(entry - tgt, 2)
+                    pnl_usd = (entry - tgt) * qty
                 elif curr_price >= sl:
                     hit_exit = True
                     exit_reason = "❌ STOP LOSS HIT"
-                    pnl = round(entry - sl, 2)
+                    pnl_usd = (entry - sl) * qty
 
             if hit_exit:
+                acc = get_account_state()
+                pnl_inr = round(pnl_usd * acc["usd_to_inr_rate"], 2)
                 trade_record = {
                     "asset": name,
                     "signal": sig_type,
@@ -345,13 +417,13 @@ def analyze_asset(name, symbol):
                     "exit": round(curr_price, 2),
                     "exit_time": datetime.now().strftime("%d %b, %I:%M:%S %p"),
                     "reason": exit_reason,
-                    "pnl": pnl,
+                    "pnl_inr": pnl_inr,
                     "timestamp": datetime.now().strftime("%d %b %Y, %I:%M %p")
                 }
                 save_trade_to_json(trade_record)
                 locked_signals[name] = {
                     "active": False, "signal": "NEUTRAL", "sig_time": "-", 
-                    "sig_price": "-", "sl": 0.0, "tgt": 0.0, "last_closed_time": state["sig_time"]
+                    "sig_price": "-", "sl": 0.0, "tgt": 0.0, "last_closed_time": state["sig_time"], "qty": 0.0, "invested_inr": 0.0
                 }
                 state = locked_signals[name]
 
@@ -374,6 +446,12 @@ def analyze_asset(name, symbol):
                     sl = round(sig_price + (ATR_MULTIPLIER * atr), 2)
                     tgt = round(sig_price - (ATR_MULTIPLIER * atr * RISK_REWARD_RATIO), 2)
 
+                # Calculate position sizing (Allocate 20% of current balance per trade)
+                acc = get_account_state()
+                allocated_inr = acc["current_balance_inr"] * 0.20
+                allocated_usd = allocated_inr / acc["usd_to_inr_rate"]
+                qty = round(allocated_usd / sig_price, 4)
+
                 locked_signals[name] = {
                     "active": True,
                     "signal": curr_signal,
@@ -381,22 +459,21 @@ def analyze_asset(name, symbol):
                     "sig_price": sig_price,
                     "sl": sl,
                     "tgt": tgt,
-                    "last_closed_time": state["last_closed_time"]
+                    "last_closed_time": state["last_closed_time"],
+                    "qty": qty,
+                    "invested_inr": round(allocated_inr, 2)
                 }
                 state = locked_signals[name]
 
-                # Send new active trade alert to Telegram
-                alert_msg = f"🚨 *New Trade Signal Locked!*\n\n" \
+                # Telegram Trade Execution Notification
+                alert_msg = f"🚨 *CSB Paper Trade Executed!*\n\n" \
                             f"📌 *Asset:* {name}\n" \
                             f"📊 *Signal:* {curr_signal}\n" \
                             f"⏰ *Time:* {sig_time_str}\n" \
                             f"💵 *Entry:* ${sig_price}\n" \
-                            f"🛑 *Stop Loss:* ${sl}\n" \
-                            f"🎯 *Target:* ${tgt}"
+                            f"📦 *Qty:* {qty} | *Invested:* ₹{allocated_inr:,.2f}\n" \
+                            f"🛑 *SL:* ${sl} | 🎯 *Target:* ${tgt}"
                 send_telegram_alert(alert_msg)
-
-        sig_price_val = state["sig_price"]
-        price_diff = round(curr_price - sig_price_val, 2) if sig_price_val != "-" else 0.0
 
         return {
             "asset": name,
@@ -404,14 +481,9 @@ def analyze_asset(name, symbol):
             "signal": state["signal"],
             "sig_time": state["sig_time"],
             "sig_price": state["sig_price"],
-            "price_diff": price_diff,
             "sl": state["sl"] if state["sl"] != 0.0 else "-",
             "tgt": state["tgt"] if state["tgt"] != 0.0 else "-",
-            "pivot": round(pivot, 2),
-            "r1": round(r1, 2),
-            "r2": round(r2, 2),
-            "s1": round(s1, 2),
-            "s2": round(s2, 2)
+            "invested_inr": state["invested_inr"]
         }
     except Exception as e:
         print(f"Error for {name}: {e}")
@@ -439,7 +511,8 @@ def index():
 def api_data():
     return jsonify({
         "market": live_market_data,
-        "history": get_history_from_json()
+        "history": get_history_from_json(),
+        "account": get_account_metrics()
     })
 
 @sock.route('/ws')
@@ -447,7 +520,8 @@ def websocket_feed(ws):
     while True:
         payload = {
             "market": live_market_data,
-            "history": get_history_from_json()
+            "history": get_history_from_json(),
+            "account": get_account_metrics()
         }
         ws.send(json.dumps(payload))
         time.sleep(1)
