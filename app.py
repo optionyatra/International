@@ -16,7 +16,7 @@ from datetime import datetime
 # 🛠️ STRATEGY & PAPER TRADING CONFIGURATION
 # =====================================================================
 ATR_MULTIPLIER = 1.5      
-RISK_REWARD_RATIO = 2.5   
+RISK_REWARD_RATIO = 4.5   
 TIMEFRAME_INTERVAL = "5m" 
 HISTORY_FILE = "trades_history.json"
 ACCOUNT_FILE = "account_state.json"
