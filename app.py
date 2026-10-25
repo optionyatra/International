@@ -13,30 +13,31 @@ import warnings
 from datetime import datetime
 
 # =====================================================================
-# 🛠️ STRATEGY CONFIGURATION (ASSET WISE PAPER TRADING & RISK)
+# 🛠️ STRATEGY & CAPITAL RISK CONFIGURATION (2% Risk Management)
 # =====================================================================
-TIMEFRAME_INTERVAL = "5m" # Chart Timeframe
+TIMEFRAME_INTERVAL = "5m"
 HISTORY_FILE = "trades_history.json"
 
-# Asset-specific Stop Loss & Target parameters (Gold R:R updated to 6.0)
 ASSET_CONFIG = {
     "Tether Gold (XAUTUSD)": {
         "symbol": "XAUT-USD",
-        "atr_multiplier": 1.5,      # Gold SL Multiplier
-        "risk_reward_ratio": 6.0    # Gold Target R:R Ratio (1:6)
+        "capital": 10000.0,         # Starting Capital: $10,000
+        "risk_pct": 0.02,           # Risk per trade: 2% ($200)
+        "atr_multiplier": 1.5,      
+        "risk_reward_ratio": 6.0    # 1:6 R:R
     },
     "Bitcoin (BTCUSD)": {
         "symbol": "BTC-USD",
-        "atr_multiplier": 2.0,      # Bitcoin SL Multiplier
-        "risk_reward_ratio": 3.0    # Bitcoin Target R:R Ratio (1:3)
+        "capital": 100000.0,        # Starting Capital: $100,000
+        "risk_pct": 0.02,           # Risk per trade: 2% ($2,000)
+        "atr_multiplier": 2.0,      
+        "risk_reward_ratio": 3.0    # 1:3 R:R
     }
 }
 
-# Telegram Credentials
 TELEGRAM_BOT_TOKEN = "8230476679:AAFcaVSR2oVzUgAtWXyJoPmCXBN38FkrYFo"
 TELEGRAM_CHAT_IDS = ["7363561056"]
 
-# Clean yfinance warnings
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
@@ -51,11 +52,11 @@ if not os.path.exists(HISTORY_FILE):
 locked_signals = {
     "Tether Gold (XAUTUSD)": {
         "active": False, "signal": "NEUTRAL", "sig_time": "-", 
-        "sig_price": "-", "sl": 0.0, "tgt": 0.0, "last_closed_time": ""
+        "sig_price": "-", "sl": 0.0, "tgt": 0.0, "qty": 0.0, "last_closed_time": ""
     },
     "Bitcoin (BTCUSD)": {
         "active": False, "signal": "NEUTRAL", "sig_time": "-", 
-        "sig_price": "-", "sl": 0.0, "tgt": 0.0, "last_closed_time": ""
+        "sig_price": "-", "sl": 0.0, "tgt": 0.0, "qty": 0.0, "last_closed_time": ""
     }
 }
 
@@ -65,7 +66,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CSB - Master Paper Trading Workstation</title>
+    <title>CSB - Risk Managed Paper Trading Workstation</title>
     <style>
         body { background-color: #0f172a; color: #f8fafc; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; position: relative; }
         .live-clock { position: absolute; left: 25px; top: 20px; background: #1e293b; border: 2px solid #0284c7; padding: 12px 22px; border-radius: 10px; font-size: 17px; font-weight: bold; color: #38bdf8; box-shadow: 0 6px 20px rgba(0,0,0,0.5); letter-spacing: 0.5px; }
@@ -96,18 +97,18 @@ HTML_TEMPLATE = """
 
     <div id="live-clock" class="live-clock">🕒 Loading IST Clock...</div>
 
-    <h2>⚡ Chandrapur Share Bazar - Master Paper Trading</h2>
-    <p class="subtitle">5-Minute Timeframe Synced with TradingView + Telegram Alerts</p>
+    <h2>⚡ Chandrapur Share Bazar - Risk Managed Ledger</h2>
+    <p class="subtitle">2% Risk Model per Trade | Gold ($10,000) & Bitcoin ($100,000)</p>
     
     <div class="tabs">
         <button class="tab-btn active" onclick="openTab(event, 'tab1')">📊 Live Screener</button>
         <button class="tab-btn" onclick="openTab(event, 'tab2')">🧱 Prev Day Pivots (S&R)</button>
-        <button class="tab-btn" onclick="openTab(event, 'tab3')">🪙 Gold Paper History</button>
-        <button class="tab-btn" onclick="openTab(event, 'tab4')">₿ Bitcoin Paper History</button>
+        <button class="tab-btn" onclick="openTab(event, 'tab3')">🪙 Gold Ledger</button>
+        <button class="tab-btn" onclick="openTab(event, 'tab4')">₿ Bitcoin Ledger</button>
     </div>
 
     <div id="tab1" class="tab-content active">
-        <h3>Active Master Signals & Locked Execution Levels</h3>
+        <h3>Active Master Signals & Dynamic Qty Allocation</h3>
         <table>
             <thead>
                 <tr>
@@ -115,8 +116,8 @@ HTML_TEMPLATE = """
                     <th>Current Price</th>
                     <th>Master Signal</th>
                     <th>Trigger Time (IST)</th>
-                    <th>Exact Entry Price</th>
-                    <th>Price Diff</th>
+                    <th>Entry Price</th>
+                    <th>Allocated Qty</th>
                     <th>Stop Loss</th>
                     <th>Target</th>
                 </tr>
@@ -148,10 +149,11 @@ HTML_TEMPLATE = """
     </div>
 
     <div id="tab3" class="tab-content">
-        <h3>🪙 Tether Gold (XAUTUSD) - Paper Trading History</h3>
+        <h3>🪙 Tether Gold (XAUTUSD) - Paper Trading Ledger</h3>
         <div class="stats-card">
+            <div class="stat-item"><div>Starting Capital</div><div class="stat-val" style="color:#38bdf8;">$10,000.00</div></div>
             <div class="stat-item"><div>Total Trades</div><div id="gold-total-trades" class="stat-val">0</div></div>
-            <div class="stat-item"><div>Total P&L ($)</div><div id="gold-total-pnl" class="stat-val">$0.00</div></div>
+            <div class="stat-item"><div>Net Ledger P&L ($)</div><div id="gold-total-pnl" class="stat-val">$0.00</div></div>
             <div class="stat-item"><div>Win Rate</div><div id="gold-win-rate" class="stat-val">0%</div></div>
         </div>
         <table>
@@ -159,24 +161,25 @@ HTML_TEMPLATE = """
                 <tr>
                     <th>Signal</th>
                     <th>Trigger Time</th>
-                    <th>Entry Price</th>
-                    <th>Exit Price</th>
-                    <th>Exit Time</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>Qty</th>
                     <th>Result</th>
                     <th>P&L ($)</th>
                 </tr>
             </thead>
             <tbody id="gold-history-data">
-                <tr><td colspan="7">No Gold paper trades recorded yet...</td></tr>
+                <tr><td colspan="7">No Gold ledger records yet...</td></tr>
             </tbody>
         </table>
     </div>
 
     <div id="tab4" class="tab-content">
-        <h3>₿ Bitcoin (BTCUSD) - Paper Trading History</h3>
+        <h3>₿ Bitcoin (BTCUSD) - Paper Trading Ledger</h3>
         <div class="stats-card">
+            <div class="stat-item"><div>Starting Capital</div><div class="stat-val" style="color:#38bdf8;">$100,000.00</div></div>
             <div class="stat-item"><div>Total Trades</div><div id="btc-total-trades" class="stat-val">0</div></div>
-            <div class="stat-item"><div>Total P&L ($)</div><div id="btc-total-pnl" class="stat-val">$0.00</div></div>
+            <div class="stat-item"><div>Net Ledger P&L ($)</div><div id="btc-total-pnl" class="stat-val">$0.00</div></div>
             <div class="stat-item"><div>Win Rate</div><div id="btc-win-rate" class="stat-val">0%</div></div>
         </div>
         <table>
@@ -184,15 +187,15 @@ HTML_TEMPLATE = """
                 <tr>
                     <th>Signal</th>
                     <th>Trigger Time</th>
-                    <th>Entry Price</th>
-                    <th>Exit Price</th>
-                    <th>Exit Time</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>Qty</th>
                     <th>Result</th>
                     <th>P&L ($)</th>
                 </tr>
             </thead>
             <tbody id="btc-history-data">
-                <tr><td colspan="7">No Bitcoin paper trades recorded yet...</td></tr>
+                <tr><td colspan="7">No Bitcoin ledger records yet...</td></tr>
             </tbody>
         </table>
     </div>
@@ -237,7 +240,6 @@ HTML_TEMPLATE = """
                 let badge = 'badge-neutral';
                 if (item.signal.includes('BUY')) badge = 'badge-buy';
                 if (item.signal.includes('SELL')) badge = 'badge-sell';
-                let diffColor = item.price_diff >= 0 ? 'bullish' : 'bearish';
                 
                 sHtml += `<tr>
                     <td>
@@ -248,7 +250,7 @@ HTML_TEMPLATE = """
                     <td><span class="badge ${badge}">${item.signal}</span></td>
                     <td><span style="color:#38bdf8; font-weight:600;">${item.sig_time}</span></td>
                     <td><strong>${item.sig_price !== '-' ? '$' + item.sig_price : '-'}</strong></td>
-                    <td class="${diffColor}">${item.price_diff !== 0 ? (item.price_diff > 0 ? '+' + item.price_diff.toFixed(2) : item.price_diff.toFixed(2)) : '0.00'}</td>
+                    <td style="color:#f59e0b; font-weight:bold;">${item.qty}</td>
                     <td class="bearish">${item.sl !== '-' ? '$' + item.sl : '-'}</td>
                     <td class="bullish">${item.tgt !== '-' ? '$' + item.tgt : '-'}</td>
                 </tr>`;
@@ -272,7 +274,7 @@ HTML_TEMPLATE = """
                     <td>${h.trigger_time}</td>
                     <td>$${h.entry}</td>
                     <td>$${h.exit}</td>
-                    <td><span style="color:#38bdf8; font-weight:600;">${h.exit_time || '-'}</span></td>
+                    <td style="color:#f59e0b; font-weight:bold;">${h.qty}</td>
                     <td><strong>${h.reason}</strong></td>
                     <td class="${pnlColor}">${pnlVal > 0 ? '+' : ''}$${pnlVal.toFixed(2)}</td>
                 </tr>`;
@@ -293,12 +295,12 @@ HTML_TEMPLATE = """
             document.getElementById('gold-total-trades').innerText = goldTrades.length;
             document.getElementById('gold-total-pnl').innerHTML = `<span class="${goldPnl >= 0 ? 'bullish' : 'bearish'}">${goldPnl >= 0 ? '+' : ''}$${goldPnl.toFixed(2)}</span>`;
             document.getElementById('gold-win-rate').innerText = goldTrades.length > 0 ? ((goldWins / goldTrades.length) * 100).toFixed(1) + '%' : '0%';
-            document.getElementById('gold-history-data').innerHTML = goldHtml || `<tr><td colspan="7">No Gold paper trades recorded yet.</td></tr>`;
+            document.getElementById('gold-history-data').innerHTML = goldHtml || `<tr><td colspan="7">No Gold ledger records yet.</td></tr>`;
 
             document.getElementById('btc-total-trades').innerText = btcTrades.length;
             document.getElementById('btc-total-pnl').innerHTML = `<span class="${btcPnl >= 0 ? 'bullish' : 'bearish'}">${btcPnl >= 0 ? '+' : ''}$${btcPnl.toFixed(2)}</span>`;
             document.getElementById('btc-win-rate').innerText = btcTrades.length > 0 ? ((btcWins / btcTrades.length) * 100).toFixed(1) + '%' : '0%';
-            document.getElementById('btc-history-data').innerHTML = btcHtml || `<tr><td colspan="7">No Bitcoin paper trades recorded yet.</td></tr>`;
+            document.getElementById('btc-history-data').innerHTML = btcHtml || `<tr><td colspan="7">No Bitcoin ledger records yet.</td></tr>`;
 
             document.getElementById('screener-data').innerHTML = sHtml;
             document.getElementById('sr-data').innerHTML = srHtml;
@@ -332,11 +334,12 @@ def save_trade_to_json(trade):
         with open(HISTORY_FILE, mode='w') as f:
             json.dump(trades, f, indent=4)
         
-        msg = f"📜 *CSB Paper Trade Closed*\n\n" \
+        msg = f"📜 *CSB Risk-Managed Trade Closed*\n\n" \
               f"📌 *Asset:* {trade['asset']}\n" \
               f"📊 *Signal:* {trade['signal']}\n" \
               f"⏱️ *Trigger:* {trade['trigger_time']}\n" \
               f"💵 *Entry:* ${trade['entry']} | *Exit:* ${trade['exit']}\n" \
+              f"📦 *Qty:* {trade['qty']}\n" \
               f"📢 *Result:* {trade['reason']}\n" \
               f"💰 *P&L:* ${trade['pnl']}"
         send_telegram_alert(msg)
@@ -354,6 +357,8 @@ def analyze_asset(name):
     global locked_signals
     config = ASSET_CONFIG[name]
     symbol = config["symbol"]
+    capital = config["capital"]
+    risk_pct = config["risk_pct"]
     atr_mult = config["atr_multiplier"]
     rr_ratio = config["risk_reward_ratio"]
 
@@ -364,7 +369,6 @@ def analyze_asset(name):
         df.index = df.index.tz_convert('Asia/Kolkata')
         
         ticker_obj = yf.Ticker(symbol)
-        
         try:
             curr_price = float(ticker_obj.fast_info.last_price)
         except:
@@ -403,6 +407,7 @@ def analyze_asset(name):
         if state["active"]:
             entry = state["sig_price"]
             sig_type = state["signal"]
+            qty = state["qty"]
 
             if "BUY" in sig_type:
                 sl = round(entry - (atr_mult * atr), 2)
@@ -422,20 +427,20 @@ def analyze_asset(name):
                 if curr_price >= tgt:
                     hit_exit = True
                     exit_reason = "🎯 TARGET HIT"
-                    pnl = round(tgt - entry, 2)
+                    pnl = round((tgt - entry) * qty, 2)
                 elif curr_price <= sl:
                     hit_exit = True
                     exit_reason = "❌ STOP LOSS HIT"
-                    pnl = round(sl - entry, 2)
+                    pnl = round((sl - entry) * qty, 2)
             elif "SELL" in sig_type:
                 if curr_price <= tgt:
                     hit_exit = True
                     exit_reason = "🎯 TARGET HIT"
-                    pnl = round(entry - tgt, 2)
+                    pnl = round((entry - tgt) * qty, 2)
                 elif curr_price >= sl:
                     hit_exit = True
                     exit_reason = "❌ STOP LOSS HIT"
-                    pnl = round(entry - sl, 2)
+                    pnl = round((entry - sl) * qty, 2)
 
             if hit_exit:
                 trade_record = {
@@ -444,6 +449,7 @@ def analyze_asset(name):
                     "trigger_time": state["sig_time"],
                     "entry": entry,
                     "exit": round(curr_price, 2),
+                    "qty": qty,
                     "exit_time": datetime.now().strftime("%d %b, %I:%M:%S %p"),
                     "reason": exit_reason,
                     "pnl": pnl,
@@ -452,7 +458,7 @@ def analyze_asset(name):
                 save_trade_to_json(trade_record)
                 locked_signals[name] = {
                     "active": False, "signal": "NEUTRAL", "sig_time": "-", 
-                    "sig_price": "-", "sl": 0.0, "tgt": 0.0, "last_closed_time": state["sig_time"]
+                    "sig_price": "-", "sl": 0.0, "tgt": 0.0, "qty": 0.0, "last_closed_time": state["sig_time"]
                 }
                 state = locked_signals[name]
 
@@ -466,13 +472,18 @@ def analyze_asset(name):
 
             if sig_time_str != state["last_closed_time"]:
                 sig_price = round(float(trigger_candle['Open']), 2)
+                sl_distance = atr_mult * atr
+                allowed_risk_amt = capital * risk_pct  # 2% of Capital
+                
+                # Qty calculation based on 2% risk amount divided by SL distance per unit
+                qty = round(allowed_risk_amt / sl_distance, 4) if sl_distance > 0 else 1.0
 
                 if "BUY" in curr_signal:
-                    sl = round(sig_price - (atr_mult * atr), 2)
-                    tgt = round(sig_price + (atr_mult * atr * rr_ratio), 2)
+                    sl = round(sig_price - sl_distance, 2)
+                    tgt = round(sig_price + (sl_distance * rr_ratio), 2)
                 else:
-                    sl = round(sig_price + (atr_mult * atr), 2)
-                    tgt = round(sig_price - (atr_mult * atr * rr_ratio), 2)
+                    sl = round(sig_price + sl_distance, 2)
+                    tgt = round(sig_price - (sl_distance * rr_ratio), 2)
 
                 locked_signals[name] = {
                     "active": True,
@@ -481,18 +492,18 @@ def analyze_asset(name):
                     "sig_price": sig_price,
                     "sl": sl,
                     "tgt": tgt,
+                    "qty": qty,
                     "last_closed_time": state["last_closed_time"]
                 }
                 state = locked_signals[name]
 
-                alert_msg = f"🚨 *New Paper Trade Signal Locked!*\n\n" \
+                alert_msg = f"🚨 *Risk-Managed Trade Locked!*\n\n" \
                             f"📌 *Asset:* {name}\n" \
                             f"📊 *Signal:* {curr_signal}\n" \
                             f"⏰ *Time:* {sig_time_str}\n" \
-                            f"💵 *Entry:* ${sig_price}\n" \
-                            f"🛑 *Stop Loss:* ${sl}\n" \
-                            f"🎯 *Target:* ${tgt}\n" \
-                            f"⚙️ *Risk:* {atr_mult}x ATR | *R:R:* 1:{rr_ratio}"
+                            f"💵 *Entry:* ${sig_price} | 📦 *Qty:* {qty}\n" \
+                            f"🛑 *Stop Loss:* ${sl} | 🎯 *Target:* ${tgt}\n" \
+                            f"⚠️ *Risk Amount:* ${allowed_risk_amt:.2f} (2%)"
                 send_telegram_alert(alert_msg)
 
         sig_price_val = state["sig_price"]
@@ -507,6 +518,7 @@ def analyze_asset(name):
             "sig_time": state["sig_time"],
             "sig_price": state["sig_price"],
             "price_diff": price_diff,
+            "qty": state["qty"] if state["qty"] != 0.0 else "-",
             "sl": state["sl"] if state["sl"] != 0.0 else "-",
             "tgt": state["tgt"] if state["tgt"] != 0.0 else "-",
             "pivot": round(pivot, 2),
